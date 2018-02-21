@@ -1,3 +1,7 @@
+# TODO: Filter – Grab only pages with specific keywords
+# TODO: Filter – Grab posts written only after a specific date
+# TODO: Include meta-metadata
+
 from urllib.error import HTTPError
 from urllib.request import urlopen, Request
 from bs4 import BeautifulSoup
@@ -10,68 +14,139 @@ def open_url(url):
     rsp = urlopen(req)
     return BeautifulSoup(rsp, 'html.parser')
 
-main_page = open_url('http://medium.com')
 
-main_links = [e.a['href'] for e in main_page.find_all('span', class_='ds-nav-text')]
+def extract_main_links(main_url, html_el, css_class):
+    """
+    :param main_url: Main URL
+    :param html_el: HTML element containing links to sub-pages
+    :param css_class: Specific CSS class for said HTML element
+    :return: List of URLs to sub-pages
+    """
+    main_page = open_url(main_url)
+    try:
+        main_links = [e.a['href'] for e in main_page.find_all(html_el, class_=css_class)]
+        return main_links
+    except AttributeError:
+        print("Attribute error occurred while extracting links.")
+        return None
 
 
-post_links = []
+def extract_post_links(main_url, html_el, css_class_nav, css_class_link):
+    """
+    :param main_url: Main URL
+    :param html_el: HTML elements containing links to pages with posts/articles
+    :param css_class_nav: Specific CSS class for said HTML element
+    :param css_class_link: Specific CSS class for <a> elements in said HTML element
+    :return: List of URLs to pages containing posts/articles
+    """
+    links = []
+    for ml in extract_main_links(main_url, html_el, css_class_nav):
+        sub_page = open_url(ml)
+        links += [e['href'] for e in sub_page.find_all('a') if css_class_link in e.attrs]
 
-for ml in main_links:
-    sub_page = open_url(ml)
-    post_links += [e['href'] for e in sub_page.find_all('a') if 'data-post-id' in e.attrs]
-
-post_links = list(set(post_links))
+    return list(set(links))
 
 
-data = {'posts' : []}
+def extract_title(bs_obj, html_el, css_class):
+    """
+    :param bs_obj: Beautiful Soup Object
+    :param html_el: HTML element containing title
+    :param css_class: Specific CSS class for said HTML element
+    :return: Content of element if found, else None
+    """
+    try:
+        title_elem = bs_obj.find_all(html_el, class_=css_class)
+        return title_elem[0].text
+    except IndexError:
+        return
+
+
+def extract_text(bs_obj):
+    """
+    :param bs_obj: Beautiful Soup Object
+    :return: Content of all <p> elements as one concatenated string
+    """
+    try:
+        pars = bs_obj.find_all('p')
+        text = [p.text for p in pars]
+        return ' '.join(text)
+    except AttributeError:
+        return
+
+
+def extract_datetime(bs_obj):
+    """
+    :param bs_obj: Beautiful Soup Object
+    :return: Datetime attribute value of ti
+main_page = open_url('http://medium.com')me element if found, else None
+    """
+    try:
+        time = bs_obj.find('time')
+        return time['datetime']
+    except AttributeError:
+        return
+
+
+def extract_author(bs_obj, html_el, css_class, css_pairs):
+    """
+    :param bs_obj: Beautiful Soup Object
+    :param html_el: HTML element containing author name
+    :param css_class: Specific CSS class for said HTML element
+    :param css_pairs: Specific pairs of CSS attributes and values for said HTML element
+    :return: Content of element if found, else None
+    """
+    try:
+        author = bs_obj.find_all(html_el, css_pairs, class_=css_class)
+        return author[0].text
+    except IndexError:
+        return
+
+
+def extract_likes(bs_obj, html_el, css_pairs):
+    """
+    :param bs_obj: Beautiful Soup Object
+    :param html_el: HTML Element where likes are found
+    :type html_el: str
+    :param css_pairs: Specific pairs of CSS attributes and values for said HTML element
+    :type css_pairs: dict
+    :return: Content of element if found, else None
+    """
+    try:
+        claps = bs_obj.find(html_el, css_pairs)
+        if claps.text[-1:] == 'K':
+            # Return full number if thousands abbreviated by 'K'
+            return int(float(claps.text[:-1]) * 1000)
+        else:
+            return claps.text
+    except AttributeError:
+        return
+
+
+# TODO: Make the following part scalable to multiple websites, referring to table with site-specific attributes
+
+post_links = extract_post_links('http://medium.com/', 'span', 'ds-nav-text', 'data-post-id')
+
+data = {'posts': []}
 
 for pl in post_links:
-    post_data = {}
+    post_data = dict()
     post_data['url'] = pl
+
     try:
         post_page = open_url(pl)
     except HTTPError:
-        print('HTTPError occured, skipping URL: {}'.format(pl))
+        print("HTTPError occurred, skipping URL: {}".format(pl))
         continue
-    # Title
-    try:
-        content = post_page.find_all('h1', class_='graf--title')
-        post_data['title'] = content[0].text
-    except IndexError:
-        post_data['title'] = None
-    # Text
-    try:
-        pars = post_page.find_all('p')
-        text = [p.text for p in pars]
-        post_data['text'] = ' '.join(text)
-    except AttributeError:
-        post_data['text'] = None
-    # Date & Time
-    try:
-        time = post_page.find('time')
-        post_data['datetime'] = time['datetime']
-    except AttributeError:
-        post_data['datetime'] = None
-    # Author
-    try:
-        author = post_page.find_all('a', {'data-action':'show-user-card'}, class_='ds-link')
-        post_data['author'] = author[0].text
-    except IndexError:
-        post_data['author'] = None
-    # Claps
-    try:
-        claps = post_page.find('button', {'data-action':'show-recommends'})
-        if claps.text[-1:] == 'K':
-            post_data['claps'] = int(float(claps.text[:-1]) * 1000)
-        else:
-            post_data['claps'] = claps.text
-    except AttributeError:
-        post_data['claps'] = None
+
+    post_data['title'] = extract_title(post_page, 'h1', 'graf--title')
+    post_data['text'] = extract_text(post_page)
+    post_data['datetime'] = extract_datetime(post_page)
+    post_data['author'] = extract_author(post_page, 'a', 'ds-link', {'data-action': 'show-user-card'})
+    post_data['claps'] = extract_likes(post_page, 'button', {'data-action': 'show-recommends'})
+
     data['posts'].append(post_data)
 
-print('Scraped {} posts from medium.com'.format(len(data['posts'])))
+print("Scraped {} posts from medium.com".format(len(data['posts'])))
 
-with open('medium-sample.json', 'w') as file:
+with open('medium-sample-180217.json', 'w') as file:
     json.dump(data, file)
-
