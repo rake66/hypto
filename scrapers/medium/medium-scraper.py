@@ -77,8 +77,7 @@ def extract_text(bs_obj):
 def extract_datetime(bs_obj):
     """
     :param bs_obj: Beautiful Soup Object
-    :return: Datetime attribute value of ti
-main_page = open_url('http://medium.com')me element if found, else None
+    :return: Datetime attribute value of time element if found, else None
     """
     try:
         time = bs_obj.find('time')
