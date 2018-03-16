@@ -1,11 +1,11 @@
 # TODO: Filter – Grab only pages with specific keywords
 # TODO: Filter – Grab posts written only after a specific date
-# TODO: Include meta-metadata
 
 from urllib.error import HTTPError
 from urllib.request import urlopen, Request
 from bs4 import BeautifulSoup
-import json
+from pymongo import MongoClient
+import datetime
 
 
 def open_url(url):
@@ -122,8 +122,6 @@ def extract_likes(bs_obj, html_el, css_pairs):
         return
 
 
-# TODO: Make the following part scalable to multiple websites, referring to table with site-specific attributes
-
 post_links = extract_post_links('http://medium.com/', 'span', 'ds-nav-text', 'data-post-id')
 
 data = {'posts': []}
@@ -146,7 +144,16 @@ for pl in post_links:
 
     data['posts'].append(post_data)
 
-print("Scraped {} posts from medium.com".format(len(data['posts'])))
 
-with open('medium-sample-180217.json', 'w') as file:
-    json.dump(data, file)
+# Add metadata about the scraping process
+data['scraper_metadata'] = {
+    'scraper': 'medium-scraper',
+    'time': datetime.datetime.now().isoformat()
+}
+
+
+# Add scraped posts to database
+client = MongoClient('mongodb://localhost:27017')
+db = client.hyptodata
+posts = db.posts
+posts.insert_one(data)
