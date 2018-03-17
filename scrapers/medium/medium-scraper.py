@@ -121,38 +121,41 @@ def extract_likes(bs_obj, html_el, css_pairs):
         return
 
 
-post_links = extract_post_links('http://medium.com/', 'span', 'ds-nav-text', 'data-post-id')
+def main():
+    post_links = extract_post_links('http://medium.com/', 'span', 'ds-nav-text', 'data-post-id')
 
-data = {'posts': []}
+    data = {'posts': []}
 
-for pl in post_links:
-    post_data = dict()
-    post_data['url'] = pl
+    for pl in post_links:
+        post_data = dict()
+        post_data['url'] = pl
 
-    try:
-        post_page = open_url(pl)
-    except HTTPError:
-        print("HTTPError occurred, skipping URL: {}".format(pl))
-        continue
+        try:
+            post_page = open_url(pl)
+        except HTTPError:
+            print("HTTPError occurred, skipping URL: {}".format(pl))
+            continue
 
-    post_data['title'] = extract_title(post_page, 'h1', 'graf--title')
-    post_data['text'] = extract_text(post_page)
-    post_data['datetime'] = extract_datetime(post_page)
-    post_data['author'] = extract_author(post_page, 'a', 'ds-link', {'data-action': 'show-user-card'})
-    post_data['claps'] = extract_likes(post_page, 'button', {'data-action': 'show-recommends'})
+        post_data['title'] = extract_title(post_page, 'h1', 'graf--title')
+        post_data['text'] = extract_text(post_page)
+        post_data['datetime'] = extract_datetime(post_page)
+        post_data['author'] = extract_author(post_page, 'a', 'ds-link', {'data-action': 'show-user-card'})
+        post_data['claps'] = extract_likes(post_page, 'button', {'data-action': 'show-recommends'})
 
-    data['posts'].append(post_data)
+        data['posts'].append(post_data)
+
+    # Add metadata about the scraping process
+    data['scraper_metadata'] = {
+        'scraper': 'medium-scraper',
+        'time': datetime.datetime.now().isoformat()
+    }
+
+    # Add scraped posts to database
+    client = MongoClient('mongodb://localhost:27017')
+    db = client.hyptodata
+    posts = db.posts
+    posts.insert_one(data)
 
 
-# Add metadata about the scraping process
-data['scraper_metadata'] = {
-    'scraper': 'medium-scraper',
-    'time': datetime.datetime.now().isoformat()
-}
-
-
-# Add scraped posts to database
-client = MongoClient('mongodb://localhost:27017')
-db = client.hyptodata
-posts = db.posts
-posts.insert_one(data)
+if __name__ == "main":
+    main()
