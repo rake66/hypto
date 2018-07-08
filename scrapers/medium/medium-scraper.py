@@ -1,50 +1,66 @@
 # TODO: Filter – Grab only pages with specific keywords
-# TODO: Filter – Grab posts written only after a specific date
 
 from urllib.error import HTTPError
 from urllib.request import urlopen, Request
+import urllib.parse
+import unicodedata
 from bs4 import BeautifulSoup
 from pymongo import MongoClient
 import datetime
 
 
-def open_url(url):
+def open_url_html(url):
+    # Set header
     hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)'}
+
+    # Handle IRIs
+    url = urllib.parse.urlsplit(url)
+    url = list(url)
+    url[2] = urllib.parse.quote(url[2])
+    url = urllib.parse.urlunsplit(url)
+
+    # Open URL and return BS object
     req = Request(url, None, hdr)
     rsp = urlopen(req)
     return BeautifulSoup(rsp, 'html.parser')
 
 
-def extract_main_links(main_url, html_el, css_class):
-    """
-    :param main_url: Main URL
-    :param html_el: HTML element containing links to sub-pages
-    :param css_class: Specific CSS class for said HTML element
-    :return: List of URLs to sub-pages
-    """
-    main_page = open_url(main_url)
-    try:
-        main_links = [e.a['href'] for e in main_page.find_all(html_el, class_=css_class)]
-        return main_links
-    except AttributeError:
-        print("Attribute error occurred while extracting links.")
-        return None
+def open_url_xml(url):
+    hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64)'}
+    req = Request(url, None, hdr)
+    rsp = urlopen(req)
+    return BeautifulSoup(rsp, 'lxml')
 
 
-def extract_post_links(main_url, html_el, css_class_nav, css_class_link):
+def extract_post_links(date_from):
     """
-    :param main_url: Main URL
-    :param html_el: HTML elements containing links to pages with posts/articles
-    :param css_class_nav: Specific CSS class for said HTML element
-    :param css_class_link: Specific CSS class for <a> elements in said HTML element
-    :return: List of URLs to pages containing posts/articles
+    :param date_from: Starting date for posts to be scraped, ISO format (YYYY-MM-DD)
+    :return: list of URLs
     """
+    sitemaps = []
     links = []
-    for ml in extract_main_links(main_url, html_el, css_class_nav):
-        sub_page = open_url(ml)
-        links += [e['href'] for e in sub_page.find_all('a') if css_class_link in e.attrs]
 
-    return list(set(links))
+    # Get sitemap URLs for each day in specified period
+    start = datetime.datetime.strptime(date_from, "%Y-%m-%d")
+    end = datetime.datetime.today()
+
+    all_days = [start + datetime.timedelta(days=x) for x in range(0, (end-start).days)]
+
+    for day in all_days:
+        date = day.strftime("%Y-%m-%d")
+        url = "https://medium.com/sitemap/posts/{}/posts-{}.xml".format(date[:4], date)
+        sitemaps.append(url)
+
+    # Get links from all sitemaps
+    for link in sitemaps:
+        try:
+            sm = open_url_xml(link)
+            urls = sm.find_all("loc")
+            links += [url.text for url in urls]
+        except HTTPError:
+            pass
+
+    return links
 
 
 def extract_title(bs_obj, html_el, css_class):
@@ -82,7 +98,8 @@ def extract_datetime(bs_obj):
     try:
         time = bs_obj.find('time')
         return time['datetime']
-    except AttributeError:
+    except (KeyError, AttributeError, TypeError):
+        print("AttributeError, KeyError or TypeError occured.")
         return
 
 
@@ -121,8 +138,8 @@ def extract_likes(bs_obj, html_el, css_pairs):
         return
 
 
-def main():
-    post_links = extract_post_links('http://medium.com/', 'span', 'ds-nav-text', 'data-post-id')
+def get_posts(date_from):
+    post_links = extract_post_links(date_from)
 
     data = {'posts': []}
 
@@ -131,16 +148,28 @@ def main():
         post_data['url'] = pl
 
         try:
-            post_page = open_url(pl)
-        except HTTPError:
-            print("HTTPError occurred, skipping URL: {}".format(pl))
+            post_page = open_url_html(pl)
+        except (HTTPError, UnicodeError):
+            print("Error occurred, skipping URL: {}".format(pl))
             continue
 
         post_data['title'] = extract_title(post_page, 'h1', 'graf--title')
-        post_data['text'] = extract_text(post_page)
+
+        try:
+            post_data['title'] = unicodedata.normalize('NFKD', post_data['title'])
+        except TypeError:
+            pass
+
+        try:
+            post_data['text'] = extract_text(post_page)
+        except TypeError:
+            pass
+
         post_data['datetime'] = extract_datetime(post_page)
         post_data['author'] = extract_author(post_page, 'a', 'ds-link', {'data-action': 'show-user-card'})
         post_data['claps'] = extract_likes(post_page, 'button', {'data-action': 'show-recommends'})
+
+        print(post_data)
 
         data['posts'].append(post_data)
 
@@ -155,6 +184,10 @@ def main():
     db = client.hyptodata
     posts = db.posts
     posts.insert_one(data)
+
+
+def main():
+    get_posts(date_from="2018-07-06")
 
 
 if __name__ == "main":
